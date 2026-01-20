@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로또 번호 매칭 분석기</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    screens: {
+                        'custom-720': '720px',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Lucide Icons as SVG components
+        const Search = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.35-4.35"></path>
+            </svg>
+        );
+
+        const Upload = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+        );
+
+        const Download = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+        );
+
+        // Simple storage polyfill for standalone HTML
+        const storage = {
+            get: async (key) => {
+                const value = localStorage.getItem(key);
+                return value ? { value } : null;
+            },
+            set: async (key, value) => {
+                localStorage.setItem(key, value);
+                return { key, value };
+            }
+        };
+
+        const LottoAnalyzer = () => {
+            const [selectedNumbers, setSelectedNumbers] = useState([]);
+            const [lottoData, setLottoData] = useState([]);
+            const [latestRound, setLatestRound] = useState(null);
+            const [matchResults, setMatchResults] = useState([]);
+            const [dataLoaded, setDataLoaded] = useState(false);
+            const [loading, setLoading] = useState(false);
+
+            useEffect(() => {
+                loadStoredData();
+            }, []);
+
+            useEffect(() => {
+                if (selectedNumbers.length === 6 && lottoData.length > 0) {
+                    calculateMatches();
+                } else {
+                    setMatchResults([]);
+                }
+            }, [selectedNumbers, lottoData]);
+
+            const loadStoredData = async () => {
+                try {
+                    const stored = await storage.get('lotto-data');
+                    const storedRound = await storage.get('lotto-latest-round');
+                    
+                    if (stored && storedRound) {
+                        const data = JSON.parse(stored.value);
+                        setLottoData(data);
+                        setLatestRound(parseInt(storedRound.value));
+                        setDataLoaded(true);
+                        console.log('저장된 데이터 로드 완료:', data.length, '개 회차');
+                    } else {
+                        console.log('저장된 데이터 없음 - 자동 다운로드 시작');
+                        await downloadFromURL();
+                    }
+                } catch (error) {
+                    console.error('저장된 데이터 로드 실패:', error);
+                    setDataLoaded(false);
+                }
+            };
+
+            const downloadFromURL = async () => {
+                setLoading(true);
+                try {
+                    const response = await fetch('https://smok95.github.io/lotto/results/all.json');
+                    
+                    if (!response.ok) {
+                        throw new Error('데이터 다운로드 실패');
+                    }
+
+                    const rawData = await response.json();
+                    const dataArray = Array.isArray(rawData) ? rawData : [rawData];
+                    const convertedData = [];
+                    
+                    for (const item of dataArray) {
+                        if (!item.draw_no || !Array.isArray(item.numbers) || item.numbers.length !== 6 || !item.bonus_no) {
+                            console.warn('잘못된 데이터 스킵:', item);
+                            continue;
+                        }
+
+                        const converted = {
+                            round: item.draw_no,
+                            date: item.date ? item.date.split('T')[0] : null,
+                            numbers: [...item.numbers].sort((a, b) => a - b),
+                            bonus: item.bonus_no,
+                            prize: (item.divisions && item.divisions[0] && item.divisions[0].prize) ? item.divisions[0].prize : 0
+                        };
+                        
+                        convertedData.push(converted);
+                    }
+
+                    if (convertedData.length === 0) {
+                        throw new Error('유효한 데이터가 없습니다.');
+                    }
+
+                    convertedData.sort((a, b) => a.round - b.round);
+
+                    const maxRound = Math.max(...convertedData.map(d => d.round));
+                    const minRound = Math.min(...convertedData.map(d => d.round));
+                    
+                    await storage.set('lotto-data', JSON.stringify(convertedData));
+                    await storage.set('lotto-latest-round', maxRound.toString());
+                    
+                    setLottoData(convertedData);
+                    setLatestRound(maxRound);
+                    setDataLoaded(true);
+                    
+                    console.log(`자동 다운로드 완료: ${convertedData.length}개 회차 (${minRound}회 ~ ${maxRound}회)`);
+                    
+                } catch (error) {
+                    console.error('자동 다운로드 실패:', error);
+                    alert('로또 데이터를 자동으로 불러오는데 실패했습니다.\nJSON 파일을 직접 업로드해주세요.\n\n에러: ' + error.message);
+                    setDataLoaded(false);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleFileUpload = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                try {
+                    const text = await file.text();
+                    const rawData = JSON.parse(text);
+                    
+                    const dataArray = Array.isArray(rawData) ? rawData : [rawData];
+                    const convertedData = [];
+                    
+                    for (const item of dataArray) {
+                        if (!item.draw_no || !Array.isArray(item.numbers) || item.numbers.length !== 6 || !item.bonus_no) {
+                            console.warn('잘못된 데이터 스킵:', item);
+                            continue;
+                        }
+
+                        const converted = {
+                            round: item.draw_no,
+                            date: item.date ? item.date.split('T')[0] : null,
+                            numbers: [...item.numbers].sort((a, b) => a - b),
+                            bonus: item.bonus_no,
+                            prize: (item.divisions && item.divisions[0] && item.divisions[0].prize) ? item.divisions[0].prize : 0
+                        };
+                        
+                        convertedData.push(converted);
+                    }
+
+                    if (convertedData.length === 0) {
+                        alert('유효한 데이터가 없습니다.');
+                        return;
+                    }
+
+                    convertedData.sort((a, b) => a.round - b.round);
+
+                    const maxRound = Math.max(...convertedData.map(d => d.round));
+                    const minRound = Math.min(...convertedData.map(d => d.round));
+                    
+                    await storage.set('lotto-data', JSON.stringify(convertedData));
+                    await storage.set('lotto-latest-round', maxRound.toString());
+                    
+                    setLottoData(convertedData);
+                    setLatestRound(maxRound);
+                    setDataLoaded(true);
+                    
+                    alert(`데이터 업로드 완료!\n총 ${convertedData.length}개 회차 (${minRound}회 ~ ${maxRound}회)`);
+                    
+                } catch (error) {
+                    console.error('파일 업로드 실패:', error);
+                    alert('파일을 읽는데 실패했습니다. JSON 형식을 확인해주세요.\n\n에러: ' + error.message);
+                }
+                
+                event.target.value = '';
+            };
+
+            const downloadCurrentData = () => {
+                if (lottoData.length === 0) {
+                    alert('저장된 데이터가 없습니다.');
+                    return;
+                }
+
+                const safeData = lottoData.map(item => ({
+                    ...item,
+                    prize: item.prize || 0,
+                    date: item.date || null
+                }));
+
+                const dataStr = JSON.stringify(safeData, null, 2);
+                const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(dataBlob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `lotto_data_${lottoData.length}rounds.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const toggleNumber = (num) => {
+                if (selectedNumbers.includes(num)) {
+                    setSelectedNumbers(selectedNumbers.filter(n => n !== num));
+                } else if (selectedNumbers.length < 6) {
+                    setSelectedNumbers([...selectedNumbers, num].sort((a, b) => a - b));
+                }
+            };
+
+            const calculateMatches = () => {
+                console.log('선택한 번호:', selectedNumbers);
+                console.log('전체 데이터 개수:', lottoData.length);
+                
+                const results = lottoData.map(lotto => {
+                    const matched = selectedNumbers.filter(num => lotto.numbers.includes(num));
+                    const bonusMatch = selectedNumbers.includes(lotto.bonus);
+                    
+                    return {
+                        ...lotto,
+                        prize: lotto.prize || 0,
+                        matchCount: matched.length,
+                        matchedNumbers: matched,
+                        bonusMatch: bonusMatch && matched.length === 5
+                    };
+                });
+                
+                results.sort((a, b) => {
+                    if (b.matchCount !== a.matchCount) {
+                        return b.matchCount - a.matchCount;
+                    }
+                    return b.round - a.round;
+                });
+                
+                const filtered = results.filter(r => r.matchCount > 0);
+                console.log('매칭된 결과 개수:', filtered.length);
+                if (filtered.length > 0) {
+                    console.log('첫 번째 매칭:', filtered[0]);
+                }
+                
+                setMatchResults(filtered);
+            };
+
+            const getNumberColor = (num) => {
+                if (num <= 10) return 'bg-yellow-400 text-yellow-900';
+                if (num <= 20) return 'bg-blue-400 text-blue-900';
+                if (num <= 30) return 'bg-red-400 text-red-900';
+                if (num <= 40) return 'bg-gray-400 text-gray-900';
+                return 'bg-green-400 text-green-900';
+            };
+
+            const getRankText = (matchCount, bonusMatch) => {
+                if (matchCount === 6) return '1등';
+                if (matchCount === 5 && bonusMatch) return '2등';
+                if (matchCount === 5) return '3등';
+                if (matchCount === 4) return '4등';
+                if (matchCount === 3) return '5등';
+                return `${matchCount}개 일치`;
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+                    <div className="max-w-7xl mx-auto">
+                        <div className="text-center mb-8">
+                            <h1 className="text-4xl font-bold text-gray-800 mb-2">로또 번호 매칭 분석기</h1>
+                            <p className="text-gray-600">
+                                번호를 선택하면 역대 당첨번호와 매칭 결과를 확인할 수 있습니다
+                                {latestRound && ` (최신 ${latestRound}회)`}
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 custom-720:grid-cols-2 gap-6">
+                            <div className="bg-white rounded-xl shadow-lg p-6">
+                                <div className="mb-4">
+                                    <h2 className="text-2xl font-bold text-gray-800 mb-3">번호 선택</h2>
+                                    
+                                    <div className="space-y-2 mb-4">
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={downloadFromURL}
+                                                disabled={loading}
+                                                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 cursor-pointer transition"
+                                            >
+                                                <Download className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                                                <span>{loading ? '다운로드 중...' : '최신 데이터 다운로드'}</span>
+                                            </button>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <label className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 cursor-pointer transition">
+                                                <Upload className="w-4 h-4" />
+                                                <span>JSON 파일 업로드</span>
+                                                <input
+                                                    type="file"
+                                                    accept=".json"
+                                                    onChange={handleFileUpload}
+                                                    className="hidden"
+                                                />
+                                            </label>
+                                            {dataLoaded && (
+                                                <button
+                                                    onClick={downloadCurrentData}
+                                                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                                                    title="현재 데이터 다운로드"
+                                                >
+                                                    <Download className="w-4 h-4" />
+                                                    내보내기
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className={`mb-4 p-4 rounded-lg ${dataLoaded ? 'bg-green-50 border-2 border-green-300' : 'bg-yellow-50 border-2 border-yellow-300'}`}>
+                                    <div className="text-sm space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-bold text-gray-700">데이터 상태:</span>
+                                            <span className={`font-bold ${dataLoaded ? 'text-green-600' : 'text-yellow-600'}`}>
+                                                {dataLoaded ? '✓ 로드 완료' : '⚠ 데이터 없음'}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-600">저장된 회차:</span>
+                                            <span className="font-semibold text-gray-800">
+                                                {lottoData.length > 0 
+                                                    ? `${Math.min(...lottoData.map(d => d.round))}~${Math.max(...lottoData.map(d => d.round))}회 (${lottoData.length}개)`
+                                                    : '0개'}
+                                            </span>
+                                        </div>
+                                        {latestRound && (
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-600">최신 회차:</span>
+                                                <span className="font-semibold text-gray-800">{latestRound}회</span>
+                                            </div>
+                                        )}
+                                        {!dataLoaded && (
+                                            <div className="mt-2 pt-2 border-t border-yellow-300">
+                                                <p className="text-xs text-yellow-700">
+                                                    {loading ? '데이터를 다운로드하고 있습니다...' : '최신 데이터 다운로드 버튼을 클릭하거나 JSON 파일을 업로드하세요'}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="mb-6">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <span className="font-semibold text-gray-700">선택한 번호:</span>
+                                        <span className="text-indigo-600 font-bold">{selectedNumbers.length}/6</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 min-h-[60px] p-3 bg-gray-50 rounded-lg">
+                                        {selectedNumbers.map(num => (
+                                            <div
+                                                key={num}
+                                                className={`w-12 h-12 rounded-full ${getNumberColor(num)} flex items-center justify-center font-bold text-lg cursor-pointer hover:scale-110 transition`}
+                                                onClick={() => toggleNumber(num)}
+                                            >
+                                                {num}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-9 gap-2">
+                                    {Array.from({ length: 45 }, (_, i) => i + 1).map(num => (
+                                        <button
+                                            key={num}
+                                            onClick={() => toggleNumber(num)}
+                                            disabled={selectedNumbers.length === 6 && !selectedNumbers.includes(num)}
+                                            className={`w-10 h-10 rounded-full font-semibold transition ${
+                                                selectedNumbers.includes(num)
+                                                    ? `${getNumberColor(num)} scale-110 shadow-lg`
+                                                    : 'bg-white border-2 border-gray-300 hover:border-indigo-400 text-gray-700 disabled:opacity-30'
+                                            }`}
+                                        >
+                                            {num}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {selectedNumbers.length === 6 && (
+                                    <button
+                                        onClick={() => setSelectedNumbers([])}
+                                        className="w-full mt-4 py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition"
+                                    >
+                                        선택 초기화
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="bg-white rounded-xl shadow-lg p-6">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                                    <Search className="w-6 h-6" />
+                                    매칭 결과
+                                </h2>
+
+                                {!dataLoaded ? (
+                                    <div className="text-center py-20">
+                                        <Upload className="w-16 h-16 mx-auto text-gray-300 mb-4" />
+                                        <p className="text-gray-500 text-lg mb-2">데이터를 업로드해주세요</p>
+                                        <p className="text-gray-400 text-sm">JSON 파일을 업로드하면 매칭 결과를 확인할 수 있습니다</p>
+                                    </div>
+                                ) : selectedNumbers.length < 6 ? (
+                                    <div className="text-center py-20">
+                                        <p className="text-gray-500 text-lg">6개의 번호를 선택해주세요</p>
+                                    </div>
+                                ) : matchResults.length === 0 ? (
+                                    <div className="text-center py-20">
+                                        <p className="text-gray-500 text-lg">매칭되는 결과가 없습니다</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                                        {matchResults.map((result) => (
+                                            <div
+                                                key={result.round}
+                                                className="border-2 border-gray-200 rounded-lg p-4 hover:border-indigo-400 transition"
+                                            >
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="text-2xl font-bold text-gray-800">{result.round}회</span>
+                                                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                                                            result.matchCount === 6 ? 'bg-red-500 text-white' :
+                                                            result.matchCount === 5 ? 'bg-orange-500 text-white' :
+                                                            result.matchCount === 4 ? 'bg-yellow-500 text-white' :
+                                                            'bg-blue-500 text-white'
+                                                        }`}>
+                                                            {getRankText(result.matchCount, result.bonusMatch)}
+                                                        </span>
+                                                    </div>
+                                                    {result.date && <span className="text-sm text-gray-500">{result.date}</span>}
+                                                </div>
+
+                                                <div className="flex flex-wrap gap-2 mb-3">
+                                                    {result.numbers.map(num => (
+                                                        <div
+                                                            key={num}
+                                                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                                                                result.matchedNumbers.includes(num)
+                                                                    ? `${getNumberColor(num)} ring-4 ring-green-400`
+                                                                    : `${getNumberColor(num)} opacity-40`
+                                                            }`}
+                                                        >
+                                                            {num}
+                                                        </div>
+                                                    ))}
+                                                    <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center font-bold text-gray-600 text-xs">
+                                                        +
+                                                    </div>
+                                                    <div
+                                                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                                                            result.bonusMatch
+                                                                ? `${getNumberColor(result.bonus)} ring-4 ring-purple-400`
+                                                                : `${getNumberColor(result.bonus)} opacity-40`
+                                                        }`}
+                                                    >
+                                                        {result.bonus}
+                                                    </div>
+                                                </div>
+
+                                                <div className="text-right text-indigo-600 font-bold">
+                                                    1등 당첨금: {result.prize?.toLocaleString() || '0'}원
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<LottoAnalyzer />);
+    </script>
+</body>
+</html>
