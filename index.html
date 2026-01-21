@@ -237,13 +237,15 @@
                 URL.revokeObjectURL(url);
             };
 
-            const toggleNumber = (num) => {
-                if (selectedNumbers.includes(num)) {
-                    setSelectedNumbers(selectedNumbers.filter(n => n !== num));
-                } else if (selectedNumbers.length < 6) {
-                    setSelectedNumbers([...selectedNumbers, num].sort((a, b) => a - b));
-                }
+            const toggleNumber = (num) => { 
+                setSelectedNumbers(prev => { 
+                    if (prev.includes(num)) return 
+                        prev.filter(n => n !== num); 
+                    if (prev.length >= 6) return prev; 
+                    return [...prev, num].sort((a, b) => a - b); 
+                }); 
             };
+            
 
             const calculateMatches = () => {
                 console.log('선택한 번호:', selectedNumbers);
