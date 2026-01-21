@@ -238,14 +238,19 @@
             };
 
             const toggleNumber = (num) => {
-                if (selectedNumbers.includes(num)) {
-                    setSelectedNumbers(selectedNumbers.filter(n => n !== num));
-                } else if (selectedNumbers.length < 6) {
-                    setSelectedNumbers([...selectedNumbers, num].sort((a, b) => a - b));
+              // num 유효성 검사 추가
+              if (num === undefined || num === null) return;
+              
+              setSelectedNumbers(prev => { //함수형 변환, 빠른 클릭 방지
+                if (prev.includes(num)) {
+                  return prev.filter(n => n !== num);
                 }
-            }
-           
-            
+                if (prev.length >= 6) {
+                  return prev;
+                }
+                return [...prev, num].sort((a, b) => a - b);
+              });
+            };
 
             const calculateMatches = () => {
                 console.log('선택한 번호:', selectedNumbers);
